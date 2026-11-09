@@ -10,3 +10,4 @@ debug/
 
 # rust build output
 fido/target/
+fprint/target/

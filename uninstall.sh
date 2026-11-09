@@ -2,6 +2,13 @@
 # remove kface PAM hooks (keeps /etc/kface face data)
 set -euo pipefail
 [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
+# give D-Bus activation back to the real fprintd
+if grep -qs kface /etc/systemd/system/fprintd.service; then
+    systemctl stop fprintd.service 2>/dev/null || true
+    rm -f /etc/systemd/system/fprintd.service /usr/local/bin/kface-fprintd
+    systemctl daemon-reload
+    echo "removed fprintd override"
+fi
 # our kde-fingerprint is a full replacement: restore or delete it, never leave it without a check
 f=/etc/pam.d/kde-fingerprint
 if [ -f "$f" ] && grep -q kface "$f"; then

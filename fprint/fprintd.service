@@ -1,0 +1,22 @@
+# Installed as /etc/systemd/system/fprintd.service by kinect-hello: overrides the stock fprintd
+# unit, so D-Bus activation of net.reactivated.Fprint starts the face service instead.
+# Remove this file (or run uninstall.sh) to get the real fprintd back.
+[Unit]
+Description=Fingerprint authentication via Kinect face verification (kface-fprintd)
+Documentation=https://github.com/JeyKul/kinect-hello
+
+[Service]
+Type=dbus
+BusName=net.reactivated.Fprint
+ExecStart=/usr/local/bin/kface-fprintd
+# needs the Kinect (USB), /etc/kface (enrollment) and the users' overlay sockets
+ProtectSystem=strict
+ReadWritePaths=/etc/kface
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true

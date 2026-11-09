@@ -29,11 +29,35 @@ hook() { # file line [source-if-missing]
 hook /etc/pam.d/sudo "$LINE_TTY"
 hook /etc/pam.d/polkit-1 "$LINE_GUI" /usr/lib/pam.d/polkit-1
 
+# Desktop fingerprint integration (GNOME, KDE, Cinnamon, fprintd-* tools): an fprintd-compatible
+# service. Needs pam_fprintd, its polkit actions and D-Bus policy from the distro's fprintd
+# package; we only override the fprintd.service unit so D-Bus activation starts kface-fprintd.
+PAM_FPRINTD=$(ls /usr/lib/security/pam_fprintd.so /usr/lib64/security/pam_fprintd.so \
+    /lib/security/pam_fprintd.so /usr/lib/x86_64-linux-gnu/security/pam_fprintd.so 2>/dev/null | head -1 || true)
+FPRINT=0
+if [ -x fprint/target/release/kface-fprintd ] && [ -n "$PAM_FPRINTD" ]; then
+    install -m755 fprint/target/release/kface-fprintd /usr/local/bin/kface-fprintd
+    install -m644 fprint/fprintd.service /etc/systemd/system/fprintd.service
+    systemctl daemon-reload
+    systemctl restart fprintd.service
+    FPRINT=1
+    echo "fprintd emulation active (real fprintd is overridden)"
+elif [ -x fprint/target/release/kface-fprintd ]; then
+    echo "note: install your distro's fprintd package and re-run for GNOME/fingerprint integration"
+fi
+
 # Lock screen: kscreenlocker runs the "kde-fingerprint" stack in parallel with the password
 # field and restarts it every second while the lock screen is visible, so putting the face
 # check there scans automatically when you come back. Our module replaces pam_fprintd and is
 # "required": this stack can only succeed through a verified face.
-if [ -f /usr/lib/pam.d/kde-fingerprint ]; then
+if [ "$FPRINT" = 1 ]; then
+    # the stock kde-fingerprint stack (pam_fprintd) now reaches the face service
+    f=/etc/pam.d/kde-fingerprint
+    if [ -f "$f" ] && grep -q kface "$f"; then
+        if [ -f "$f.pre-kface" ]; then mv "$f.pre-kface" "$f"; else rm -f "$f"; fi
+    fi
+    if [ -f /etc/pam.d/kde ]; then sed -i '/kface/d' /etc/pam.d/kde; fi
+elif [ -f /usr/lib/pam.d/kde-fingerprint ]; then
     f=/etc/pam.d/kde-fingerprint
     src=/usr/lib/pam.d/kde-fingerprint
     if [ -f "$f" ] && ! grep -q kface "$f"; then

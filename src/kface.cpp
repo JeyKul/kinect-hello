@@ -122,14 +122,14 @@ static int cmd_pose()
     return 0;
 }
 
-static int cmd_enroll(const std::string &user, int samples)
+static int cmd_enroll(const std::string &user, int samples, bool replace)
 {
     Config c;
     load_config(c);
     Kinect k;
     FaceEngine fe;
     if (!fe.init() || !k.open()) return 2;
-    auto faces = load_faces(user);
+    auto faces = replace ? std::vector<cv::Mat>() : load_faces(user);
     printf("Look at the Kinect, slowly turn your head a little left/right/up/down...\n");
     cv::Mat ir, depth;
     int got = 0;
@@ -162,7 +162,10 @@ static int cmd_enroll(const std::string &user, int samples)
     return 0;
 }
 
-static int cmd_verify(const std::string &user)
+// Without wait: succeed or give up after timeout_s (PAM via pam_exec).
+// With wait (fprintd emulation): scan until a match, or until someone else's live face has
+// been in front of the sensor for stranger_s (exit 1, "no match"), or until stopped.
+static int cmd_verify(const std::string &user, bool wait = false)
 {
     Config c;
     load_config(c);
@@ -179,15 +182,17 @@ static int cmd_verify(const std::string &user)
     printf("Looking for your face...\n");
     fflush(stdout);
     cv::Mat ir, depth;
-    Streak streak;
+    Streak streak, stranger;
+    const double stranger_s = 3.0;
     auto t0 = Clock::now();
-    auto deadline = t0 + std::chrono::duration<double>(c.timeout_s);
+    auto deadline = t0 + std::chrono::duration<double>(wait ? 600.0 : c.timeout_s);
     while (Clock::now() < deadline && !stop_flag()) {
         if (!k.grab(ir, depth)) continue;
         Face f;
         double t = std::chrono::duration<double>(Clock::now() - t0).count();
         if (!fe.analyse(ir, depth, k, c, f)) {
             streak.update(t, false, c.attention_s);
+            stranger.update(t, false, stranger_s);
             continue;
         }
         float best = -1;
@@ -199,6 +204,7 @@ static int cmd_verify(const std::string &user)
             if (pw) notify_overlay(uid, "ok");
             return 0;
         }
+        if (wait && stranger.update(t, f.live && facing_sensor(f, c) && best < c.match_threshold, stranger_s)) break;
     }
     if (pw) notify_overlay(uid, "fail");
     return 1;
@@ -281,6 +287,18 @@ int main(int argc, char **argv)
                                                             : cv::utils::logging::LOG_LEVEL_SILENT);
     setvbuf(stdout, nullptr, _IOLBF, 0);
     install_stop_handler();
+    // flags may appear anywhere; positional arguments keep their order
+    bool wait = false, replace = false;
+    {
+        int n = 1;
+        for (int i = 1; i < argc; i++) {
+            std::string a = argv[i];
+            if (a == "--wait") wait = true;
+            else if (a == "--replace") replace = true;
+            else argv[n++] = argv[i];
+        }
+        argc = n;
+    }
     std::string cmd = argc > 1 ? argv[1] : "";
     // pam_exec passes the user in the environment
     if (cmd == "verify" && argc == 2 && getenv("PAM_USER")) {
@@ -291,7 +309,7 @@ int main(int argc, char **argv)
             struct passwd *pw = getpwuid(getuid());
             if (!pw || user != pw->pw_name) return 4;
         }
-        return cmd_verify(user);
+        return cmd_verify(user, wait);
     }
     if (cmd == "import" && argc == 3) return cmd_import(argv[2]);
     if (cmd == "remove" && argc == 2) return cmd_remove();
@@ -305,10 +323,10 @@ int main(int argc, char **argv)
                 fprintf(stderr, "kface: enroll needs root (sudo kface enroll %s)\n", user.c_str());
                 return 77;
             }
-            return cmd_enroll(user, argc > 3 ? atoi(argv[3]) : 15);
+            return cmd_enroll(user, argc > 3 ? atoi(argv[3]) : 15, replace);
         }
-        return cmd_verify(user);
+        return cmd_verify(user, wait);
     }
-    fprintf(stderr, "usage: kface debug [n] | enroll <user> [samples] | verify <user> | import <file> | remove\n");
+    fprintf(stderr, "usage: kface debug [n] | enroll <user> [samples] [--replace] | verify <user> [--wait] | import <file> | remove\n");
     return 64;
 }

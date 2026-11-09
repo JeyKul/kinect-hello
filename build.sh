@@ -34,4 +34,7 @@ if command -v cargo >/dev/null && [ -e /dev/tpmrm0 ]; then
     cargo build --release --manifest-path fido/Cargo.toml
     cargo test --release --manifest-path fido/Cargo.toml
 fi
+if command -v cargo >/dev/null; then
+    cargo build --release --manifest-path fprint/Cargo.toml
+fi
 echo "built. install with: sudo ./install.sh"
