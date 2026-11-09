@@ -14,3 +14,8 @@ target_link_libraries(kface PRIVATE ${freenect2_LIBRARIES} ${OpenCV_LIBS})
 set_target_properties(kface PROPERTIES BUILD_RPATH "${freenect2_DIR}/../.." INSTALL_RPATH "/usr/local/lib/kface")
 
 install(TARGETS kface DESTINATION bin)
+
+enable_testing()
+add_executable(kface_tests tests/test_core.cpp)
+target_link_libraries(kface_tests PRIVATE opencv_core)
+add_test(NAME core COMMAND kface_tests)
