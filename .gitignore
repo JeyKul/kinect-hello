@@ -1,0 +1,9 @@
+# third-party / build output
+libfreenect2/
+prefix/
+build/
+models/
+# personal biometric data - never commit
+data/
+debug/
+*.faces
