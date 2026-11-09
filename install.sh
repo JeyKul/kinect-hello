@@ -28,7 +28,33 @@ hook() { # file line [source-if-missing]
 }
 hook /etc/pam.d/sudo "$LINE_TTY"
 hook /etc/pam.d/polkit-1 "$LINE_GUI" /usr/lib/pam.d/polkit-1
-hook /etc/pam.d/kde "$LINE_GUI" /usr/lib/pam.d/kde
+
+# Lock screen: kscreenlocker runs the "kde-fingerprint" stack in parallel with the password
+# field and restarts it every second while the lock screen is visible, so putting the face
+# check there scans automatically when you come back. Our module replaces pam_fprintd and is
+# "required": this stack can only succeed through a verified face.
+if [ -f /usr/lib/pam.d/kde-fingerprint ]; then
+    f=/etc/pam.d/kde-fingerprint
+    src=/usr/lib/pam.d/kde-fingerprint
+    if [ -f "$f" ] && ! grep -q kface "$f"; then
+        [ -f "$f.pre-kface" ] || cp -a "$f" "$f.pre-kface"
+        src=$f
+    fi
+    sed -E 's|^-?auth[[:space:]]+required[[:space:]]+pam_fprintd\.so.*|auth       required     pam_exec.so quiet stdout /usr/local/bin/kface verify|' "$src" > "$f.new"
+    if grep -q '^auth .*required .*kface verify' "$f.new"; then
+        chmod 644 "$f.new"
+        mv "$f.new" "$f"
+        echo "hooked $f"
+        # the password field stays password-only (both stacks would compete for the Kinect)
+        if [ -f /etc/pam.d/kde ]; then sed -i '/kface/d' /etc/pam.d/kde; fi
+    else
+        rm -f "$f.new"
+        echo "unexpected $src layout; lock screen uses the password stack instead"
+        hook /etc/pam.d/kde "$LINE_GUI" /usr/lib/pam.d/kde
+    fi
+else
+    hook /etc/pam.d/kde "$LINE_GUI" /usr/lib/pam.d/kde
+fi
 hook /etc/pam.d/sddm "$LINE_GUI"
 # passkeys: virtual FIDO2 key (built with: cargo build --release --manifest-path fido/Cargo.toml)
 if [ -x fido/target/release/kface-fido ] && [ -e /dev/tpmrm0 ]; then

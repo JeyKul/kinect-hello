@@ -2,7 +2,7 @@
 
 3D face unlock and passkeys for Linux with a **Kinect v2** (Xbox One Kinect), in the style of Windows Hello.
 
-- **Face unlock** for `sudo`, polkit prompts, the KDE lock screen and SDDM login, with your password as fallback
+- **Face unlock** for `sudo`, polkit prompts, the KDE lock screen and SDDM login, with your password as fallback. The lock screen scans by itself as soon as it appears, through KDE's parallel fingerprint stack, so there's no need to press Enter.
 - **Liveness from real depth:** the Kinect's time-of-flight camera has to see a 3D face
 - **Attention check:** your head has to point at the sensor for 0.6 s, so a sudo prompt can't pass while you look at another screen
 - **Passkeys:** a virtual FIDO2 security key whose keys live in the TPM and are released only after face verification. Works in Firefox and Chrome for any site that supports security keys or passkeys.
@@ -43,7 +43,7 @@ sudo ./install.sh     # installs to /usr/local, hooks PAM (sudo, polkit-1, kde, 
 kface-setup           # enroll your face ("Face Unlock" in the app menu)
 ```
 
-`install.sh` backs up every PAM file it touches as `*.pre-kface`. `sudo ./uninstall.sh` removes the hooks and binaries but keeps your face data in `/etc/kface`. SSH and `su` are never hooked.
+`install.sh` backs up every PAM file it touches as `*.pre-kface`. For the lock screen it replaces `pam_fprintd` in `/etc/pam.d/kde-fingerprint` with the face check (so a real fingerprint reader and kface can't be used together on the lock screen yet). `sudo ./uninstall.sh` removes the hooks and binaries but keeps your face data in `/etc/kface`. SSH and `su` are never hooked.
 
 Tuning goes in `/etc/kface/kface.conf`, one `key value` pair per line: `match_threshold`, `max_yaw_deg`, `attention_s`, `timeout_s`, `min_relief_mm`, `min_relief_v_mm`, `min_relief_h_mm`, `min_plane_rms_mm`.
 
