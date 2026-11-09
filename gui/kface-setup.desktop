@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Face Unlock
+GenericName=Kinect face unlock setup
+Comment=Set up face authentication with a Kinect v2
+Exec=kface-setup
+Icon=user-identity
+Categories=Settings;Security;Qt;
+Keywords=face;kinect;hello;unlock;login;biometric;

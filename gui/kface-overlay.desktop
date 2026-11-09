@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Face Unlock overlay
+Comment=Shows face scan progress
+Exec=kface-overlay
+NoDisplay=true
+X-KDE-autostart-phase=2
+OnlyShowIn=KDE;

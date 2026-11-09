@@ -3,22 +3,22 @@
 //   kface debug  [n]        save n annotated IR frames to ./debug, print metrics
 //   kface enroll <user>     capture and store IR face embeddings for <user>
 //   kface verify <user>     exit 0 if a live, matching face is seen within timeout
+//   kface import <file>     (via pkexec) install embeddings captured by kface-setup for the caller
+//   kface remove            (via pkexec) delete the caller's enrolled faces
 //
 // Recognition runs on the IR image (works in darkness, screens are black in IR).
 // Liveness uses the pixel-aligned depth map: the face must have real 3D relief
 // (nose in front of eyes, non-planar surface) and a metric size of a human face.
 
-#include <libfreenect2/libfreenect2.hpp>
-#include <libfreenect2/frame_listener_impl.h>
-#include <libfreenect2/packet_pipeline.h>
-#include <libfreenect2/logger.h>
+#include "kface_sensor.hpp"
+#include "kface_notify.hpp"
+
 #include <opencv2/opencv.hpp>
-#include <opencv2/objdetect/face.hpp>
 #include <opencv2/core/utils/logger.hpp>
 
-#include "kface_core.hpp"
-
+#include <fcntl.h>
 #include <pwd.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <chrono>
@@ -31,122 +31,8 @@
 #include <vector>
 
 using namespace kface;
+namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
-
-// ---------------------------------------------------------------- sensor
-
-class Kinect {
-public:
-    bool open()
-    {
-        libfreenect2::setGlobalLogger(libfreenect2::createConsoleLogger(
-            getenv("KFACE_VERBOSE") ? libfreenect2::Logger::Info : libfreenect2::Logger::None));
-        if (fn_.enumerateDevices() == 0) {
-            fprintf(stderr, "kface: no Kinect v2 found\n");
-            return false;
-        }
-        dev_ = fn_.openDefaultDevice(new libfreenect2::CpuPacketPipeline());
-        if (!dev_) return false;
-        dev_->setIrAndDepthFrameListener(&listener_);
-        if (!dev_->startStreams(false, true)) return false;
-        auto p = dev_->getIrCameraParams();
-        fx_ = p.fx; fy_ = p.fy; cx_ = p.cx; cy_ = p.cy;
-        return true;
-    }
-
-    ~Kinect()
-    {
-        if (dev_) {
-            dev_->stop();
-            dev_->close();
-            delete dev_;
-        }
-    }
-
-    // ir: 8-bit contrast-normalised, depth: float mm (0 = invalid); both mirrored to selfie view
-    bool grab(cv::Mat &ir8, cv::Mat &depth)
-    {
-        libfreenect2::FrameMap frames;
-        if (!listener_.waitForNewFrame(frames, 2000)) return false;
-        auto *ir = frames[libfreenect2::Frame::Ir];
-        auto *d = frames[libfreenect2::Frame::Depth];
-        cv::Mat irf(ir->height, ir->width, CV_32FC1, ir->data);
-        cv::Mat df(d->height, d->width, CV_32FC1, d->data);
-
-        // IR intensity is roughly 1/r^2; sqrt + fixed scale gives a stable, skin-friendly range
-        cv::Mat s;
-        cv::sqrt(cv::min(irf, 65535.f), s);
-        s.convertTo(ir8, CV_8U, 255.0 / 140.0);
-        cv::flip(ir8, ir8, 1);
-        cv::flip(df, depth, 1);
-        depth = depth.clone();
-        listener_.release(frames);
-        return true;
-    }
-
-    float fx_ = 365, fy_ = 365, cx_ = 256, cy_ = 212;
-
-private:
-    libfreenect2::Freenect2 fn_;
-    libfreenect2::Freenect2Device *dev_ = nullptr;
-    libfreenect2::SyncMultiFrameListener listener_{libfreenect2::Frame::Ir | libfreenect2::Frame::Depth};
-};
-
-// ---------------------------------------------------------------- face
-
-
-class FaceEngine {
-public:
-    bool init()
-    {
-        try {
-            det_ = cv::FaceDetectorYN::create(model_dir() + "/face_detection_yunet_2023mar.onnx", "",
-                                              cv::Size(W, H), 0.7f, 0.3f, 5000);
-            rec_ = cv::FaceRecognizerSF::create(model_dir() + "/face_recognition_sface_2021dec.onnx", "");
-        } catch (const cv::Exception &e) {
-            fprintf(stderr, "kface: cannot load models from %s: %s\n", model_dir().c_str(), e.what());
-            return false;
-        }
-        return true;
-    }
-
-    // largest face in frame, analysed for liveness, with embedding
-    bool analyse(const cv::Mat &ir8, const cv::Mat &depth, const Kinect &k, const Config &c, Face &f)
-    {
-        cv::Mat big, bgr, faces;
-        cv::resize(ir8, big, cv::Size(W, H), 0, 0, cv::INTER_LINEAR);
-        cv::cvtColor(big, bgr, cv::COLOR_GRAY2BGR);
-        det_->detect(bgr, faces);
-        if (faces.rows == 0) return false;
-
-        int best = 0;
-        for (int i = 1; i < faces.rows; i++)
-            if (faces.at<float>(i, 2) * faces.at<float>(i, 3) > faces.at<float>(best, 2) * faces.at<float>(best, 3))
-                best = i;
-        f.det = faces.row(best).clone();
-
-        cv::Mat aligned;
-        rec_->alignCrop(bgr, f.det, aligned);
-        rec_->feature(aligned, f.feature);
-        f.feature = f.feature.clone();
-
-        liveness(depth, {k.fx_, k.fy_, k.cx_, k.cy_}, c, f);
-        return true;
-    }
-
-    float match(const cv::Mat &a, const cv::Mat &b)
-    {
-        return (float)rec_->match(a, b, cv::FaceRecognizerSF::FR_COSINE);
-    }
-
-    static constexpr int W = 1024, H = 848;  // 2x upscale of the 512x424 IR image
-
-private:
-
-    cv::Ptr<cv::FaceDetectorYN> det_;
-    cv::Ptr<cv::FaceRecognizerSF> rec_;
-};
-
 
 // ---------------------------------------------------------------- commands
 
@@ -243,6 +129,9 @@ static int cmd_verify(const std::string &user)
     Kinect k;
     FaceEngine fe;
     if (!fe.init() || !k.open()) return 2;
+    struct passwd *pw = getpwnam(user.c_str());
+    uid_t uid = pw ? pw->pw_uid : (uid_t)-1;
+    if (pw) notify_overlay(uid, "scan");
     printf("Looking for your face...\n");
     fflush(stdout);
     cv::Mat ir, depth;
@@ -258,10 +147,85 @@ static int cmd_verify(const std::string &user)
             fprintf(stderr, "sim %.3f relief %.1f v %.1f h %.1f rms %.1f iod %.0f %s\n", best, f.relief, f.relief_v, f.relief_h, f.plane_rms, f.iod,
                     f.live ? "live" : f.why.c_str());
         if (f.live && best >= c.match_threshold) {
-            if (++hits >= c.need_matches) return 0;
+            if (++hits >= c.need_matches) {
+                if (pw) notify_overlay(uid, "ok");
+                return 0;
+            }
         }
     }
+    if (pw) notify_overlay(uid, "fail");
     return 1;
+}
+
+// The user who invoked us through pkexec or sudo; import/remove only ever act on that user.
+static bool calling_user(std::string &user, uid_t &uid)
+{
+    const char *e = getenv("PKEXEC_UID");
+    if (!e) e = getenv("SUDO_UID");
+    if (geteuid() != 0 || !e) return false;
+    struct passwd *pw = getpwuid((uid_t)strtoul(e, nullptr, 10));
+    if (!pw || !valid_user(pw->pw_name)) return false;
+    user = pw->pw_name;
+    uid = pw->pw_uid;
+    return true;
+}
+
+static int cmd_import(const char *path)
+{
+    std::string user;
+    uid_t uid;
+    if (!calling_user(user, uid)) {
+        fprintf(stderr, "kface: run as: pkexec kface import <file>\n");
+        return 77;
+    }
+    // read only a regular file that the caller owns (we run as root)
+    int fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+    struct stat st;
+    if (fd < 0 || fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_uid != uid || st.st_size > (1 << 20)) {
+        fprintf(stderr, "kface: refusing to read %s\n", path);
+        if (fd >= 0) close(fd);
+        return 1;
+    }
+    std::string buf(st.st_size, '\0');
+    bool ok = read(fd, buf.data(), buf.size()) == (ssize_t)buf.size();
+    close(fd);
+    std::vector<cv::Mat> faces;
+    if (ok) {
+        try {
+            cv::FileStorage fsr(buf, cv::FileStorage::READ | cv::FileStorage::MEMORY);
+            for (auto n : fsr["faces"]) {
+                cv::Mat m;
+                n >> m;
+                faces.push_back(m);
+            }
+        } catch (const cv::Exception &) {
+            faces.clear();
+        }
+    }
+    if (!valid_faces(faces)) {
+        fprintf(stderr, "kface: %s is not a valid face file\n", path);
+        return 1;
+    }
+    if (!save_faces(user, faces)) {
+        fprintf(stderr, "kface: cannot write %s\n", user_file(user).c_str());
+        return 1;
+    }
+    printf("Installed %zu samples for %s\n", faces.size(), user.c_str());
+    return 0;
+}
+
+static int cmd_remove()
+{
+    std::string user;
+    uid_t uid;
+    if (!calling_user(user, uid)) {
+        fprintf(stderr, "kface: run as: pkexec kface remove\n");
+        return 77;
+    }
+    std::error_code ec;
+    fs::remove(user_file(user), ec);
+    printf("Removed faces for %s\n", user.c_str());
+    return ec ? 1 : 0;
 }
 
 int main(int argc, char **argv)
@@ -280,6 +244,8 @@ int main(int argc, char **argv)
         }
         return cmd_verify(user);
     }
+    if (cmd == "import" && argc == 3) return cmd_import(argv[2]);
+    if (cmd == "remove" && argc == 2) return cmd_remove();
     if (cmd == "debug") return cmd_debug(argc > 2 ? atoi(argv[2]) : 20);
     if ((cmd == "enroll" || cmd == "verify") && argc > 2) {
         std::string user = argv[2];
@@ -293,6 +259,6 @@ int main(int argc, char **argv)
         }
         return cmd_verify(user);
     }
-    fprintf(stderr, "usage: kface debug [n] | enroll <user> [samples] | verify <user>\n");
+    fprintf(stderr, "usage: kface debug [n] | enroll <user> [samples] | verify <user> | import <file> | remove\n");
     return 64;
 }

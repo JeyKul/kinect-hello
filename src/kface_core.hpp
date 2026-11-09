@@ -164,30 +164,50 @@ inline void liveness(const cv::Mat &depth, const Intrinsics &k, const Config &c,
 
 inline fs::path user_file(const std::string &user) { return fs::path(data_dir()) / (user + ".faces"); }
 
-inline std::vector<cv::Mat> load_faces(const std::string &user)
+// embeddings file: an OpenCV FileStorage sequence "faces" of 1x128 float rows
+inline std::vector<cv::Mat> read_faces(const std::string &path)
 {
     std::vector<cv::Mat> out;
-    cv::FileStorage fsr(user_file(user).string(), cv::FileStorage::READ);
-    if (!fsr.isOpened()) return out;
-    for (auto n : fsr["faces"]) {
-        cv::Mat m;
-        n >> m;
-        out.push_back(m);
+    try {
+        cv::FileStorage fsr(path, cv::FileStorage::READ);
+        if (!fsr.isOpened()) return out;
+        for (auto n : fsr["faces"]) {
+            cv::Mat m;
+            n >> m;
+            out.push_back(m);
+        }
+    } catch (const cv::Exception &) {
+        out.clear();
     }
     return out;
 }
+
+inline bool write_faces(const std::string &path, const std::vector<cv::Mat> &faces)
+{
+    cv::FileStorage fsw(path, cv::FileStorage::WRITE);
+    if (!fsw.isOpened()) return false;
+    fsw << "faces" << "[";
+    for (auto &m : faces) fsw << m;
+    fsw << "]";
+    return true;
+}
+
+// sanity check for embeddings coming from an untrusted file
+inline bool valid_faces(const std::vector<cv::Mat> &faces)
+{
+    if (faces.empty() || faces.size() > 200) return false;
+    for (auto &m : faces)
+        if (m.rows != 1 || m.cols != 128 || m.type() != CV_32F || !cv::checkRange(m)) return false;
+    return true;
+}
+
+inline std::vector<cv::Mat> load_faces(const std::string &user) { return read_faces(user_file(user).string()); }
 
 inline bool save_faces(const std::string &user, const std::vector<cv::Mat> &faces)
 {
     fs::create_directories(data_dir());
     auto tmp = user_file(user).string() + ".tmp";
-    {
-        cv::FileStorage fsw(tmp, cv::FileStorage::WRITE);
-        if (!fsw.isOpened()) return false;
-        fsw << "faces" << "[";
-        for (auto &m : faces) fsw << m;
-        fsw << "]";
-    }
+    if (!write_faces(tmp, faces)) return false;
     fs::permissions(tmp, fs::perms::owner_read | fs::perms::owner_write);
     if (geteuid() == 0) {
         if (struct passwd *pw = getpwnam(user.c_str())) {
