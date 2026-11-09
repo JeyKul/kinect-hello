@@ -1,0 +1,27 @@
+[Unit]
+Description=kface virtual FIDO2 security key (TPM passkeys, face verification)
+After=systemd-udevd.service
+ConditionPathExists=/dev/tpmrm0
+
+[Service]
+ExecStart=/usr/local/bin/kface-fido
+Restart=on-failure
+RestartSec=2
+StateDirectory=kface-fido
+StateDirectoryMode=0700
+# needs /dev/uhid, /dev/tpmrm0, the Kinect (via kface verify) and the seat state
+ProtectSystem=strict
+ReadWritePaths=/var/lib/kface-fido
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

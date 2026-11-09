@@ -30,4 +30,13 @@ hook /etc/pam.d/sudo "$LINE_TTY"
 hook /etc/pam.d/polkit-1 "$LINE_GUI" /usr/lib/pam.d/polkit-1
 hook /etc/pam.d/kde "$LINE_GUI" /usr/lib/pam.d/kde
 hook /etc/pam.d/sddm "$LINE_GUI"
+# passkeys: virtual FIDO2 key (built with: cargo build --release --manifest-path fido/Cargo.toml)
+if [ -x fido/target/release/kface-fido ] && [ -e /dev/tpmrm0 ]; then
+    install -m755 fido/target/release/kface-fido /usr/local/bin/kface-fido
+    install -m644 fido/kface-fido.service /etc/systemd/system/kface-fido.service
+    systemctl daemon-reload
+    systemctl enable kface-fido.service >/dev/null 2>&1
+    systemctl restart kface-fido.service
+    echo "kface-fido service running"
+fi
 echo "done. test: sudo -k; sudo true"

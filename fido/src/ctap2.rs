@@ -253,11 +253,16 @@ impl Authenticator {
             ERR_OTHER
         })?;
 
-        let _ = cdh; // "none" attestation does not sign the client data
+        // packed self-attestation: the new credential key signs authData || clientDataHash
+        let blob = creds.last().unwrap().key.clone();
+        let sig = self.store.sign(&blob, &[ad.as_slice(), &cdh].concat()).map_err(|e| {
+            eprintln!("kface-fido: {e}");
+            ERR_OTHER
+        })?;
         Ok(encode(&Value::Map(vec![
-            (int(1), text("none")),
+            (int(1), text("packed")),
             (int(2), Value::Bytes(ad)),
-            (int(3), Value::Map(vec![])),
+            (int(3), Value::Map(vec![(text("alg"), int(ES256)), (text("sig"), Value::Bytes(sig))])),
         ])))
     }
 
@@ -416,8 +421,13 @@ mod tests {
         let (st, body) = run(&mut a, MAKE_CREDENTIAL, make_params(true, vec![]), true);
         assert_eq!(st, OK);
         let body = body.unwrap();
-        assert_eq!(get(&body, 1).unwrap().as_text(), Some("none"));
+        assert_eq!(get(&body, 1).unwrap().as_text(), Some("packed"));
         let (id, vk) = attested(get(&body, 2).unwrap().as_bytes().unwrap());
+        // self attestation verifies with the credential's own key
+        let att = get(&body, 3).unwrap().as_map().unwrap();
+        let att_sig = Signature::from_der(get_text(att, "sig").unwrap().as_bytes().unwrap()).unwrap();
+        let att_data = [get(&body, 2).unwrap().as_bytes().unwrap().as_slice(), &[7u8; 32]].concat();
+        assert!(vk.verify(&att_data, &att_sig).is_ok());
 
         // discoverable: no allow list
         let params = Value::Map(vec![(int(1), text("example.com")), (int(2), Value::Bytes(vec![9; 32]))]);
