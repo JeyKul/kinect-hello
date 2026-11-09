@@ -10,9 +10,28 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/objdetect/face.hpp>
 
+#include <atomic>
+#include <csignal>
 #include <cstdio>
 
 namespace kface {
+
+// Set by SIGINT/SIGTERM/SIGHUP so capture loops end and the Kinect is closed properly;
+// a killed process leaves the IR emitter on until the next clean close.
+inline std::atomic<bool> &stop_flag()
+{
+    static std::atomic<bool> flag{false};
+    return flag;
+}
+
+inline void install_stop_handler()
+{
+    stop_flag();
+    struct sigaction sa {};
+    sa.sa_handler = [](int) { stop_flag() = true; };
+    sigemptyset(&sa.sa_mask);
+    for (int sig : {SIGINT, SIGTERM, SIGHUP}) sigaction(sig, &sa, nullptr);
+}
 
 // ---------------------------------------------------------------- sensor
 
@@ -47,6 +66,7 @@ public:
     // ir: 8-bit contrast-normalised, depth: float mm (0 = invalid); both mirrored to selfie view
     bool grab(cv::Mat &ir8, cv::Mat &depth)
     {
+        if (stop_flag()) return false;
         libfreenect2::FrameMap frames;
         if (!listener_.waitForNewFrame(frames, 2000)) return false;
         auto *ir = frames[libfreenect2::Frame::Ir];

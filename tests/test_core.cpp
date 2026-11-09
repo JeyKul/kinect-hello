@@ -34,10 +34,11 @@ static cv::Mat scene(const std::function<float(float, float)> &z)
 
 // YuNet-style detection row in 2x upscaled coordinates for a frontal face of the given
 // metric interocular distance at the given distance.
-static cv::Mat detection(float iod_mm, float dist_mm)
+// nose_dx shifts the nose landmark sideways (IR pixels), as it appears when the head turns.
+static cv::Mat detection(float iod_mm, float dist_mm, float nose_dx = 0)
 {
     float e = iod_mm * K.fx / dist_mm / 2;  // half eye distance in IR pixels
-    float pts[10] = {NX - e, NY - 0.7f * e, NX + e, NY - 0.7f * e, NX, NY,
+    float pts[10] = {NX - e, NY - 0.7f * e, NX + e, NY - 0.7f * e, NX + nose_dx, NY + 0.25f * e,
                      NX - 0.7f * e, NY + 1.2f * e, NX + 0.7f * e, NY + 1.2f * e};
     cv::Mat det(1, 15, CV_32F);
     float *p = det.ptr<float>();
@@ -50,11 +51,11 @@ static cv::Mat detection(float iod_mm, float dist_mm)
     return det;
 }
 
-static Face run(const cv::Mat &depth, float iod_mm = 64, float dist_mm = 700)
+static Face run(const cv::Mat &depth, float iod_mm = 64, float dist_mm = 700, float nose_dx = 0)
 {
     Config c;
     Face f;
-    f.det = detection(iod_mm, dist_mm);
+    f.det = detection(iod_mm, dist_mm, nose_dx);
     liveness(depth, K, c, f);
     return f;
 }
@@ -141,6 +142,39 @@ static void test_depth_at_ignores_holes()
     CHECK(depth_at(d, -50, -50) == 0);
 }
 
+// ---------------------------------------------------------------- attention
+
+static void test_facing_sensor()
+{
+    Config c;
+    auto depth = scene([](float dx, float dy) { return face_z(dx, dy); });
+    Face front = run(depth);
+    CHECK(std::fabs(front.yaw) < 5);
+    CHECK(facing_sensor(front, c));
+
+    // nose displaced by relief * sin(40 deg): head turned towards another screen
+    float px = front.relief * std::sin(40 * CV_PI / 180) / (front.dist / K.fx);
+    Face turned = run(depth, 64, 700, px);
+    CHECK(turned.yaw > 30);
+    CHECK(!facing_sensor(turned, c));
+    Face other = run(depth, 64, 700, -px);
+    CHECK(other.yaw < -30);
+    CHECK(!facing_sensor(other, c));
+}
+
+static void test_streak()
+{
+    Streak s;
+    CHECK(!s.update(0.0, true, 0.6));
+    CHECK(!s.update(0.5, true, 0.6));
+    CHECK(s.update(0.6, true, 0.6));
+    // any interruption (glance away, lost face) restarts the clock
+    CHECK(!s.update(0.7, false, 0.6));
+    CHECK(!s.update(0.8, true, 0.6));
+    CHECK(!s.update(1.3, true, 0.6));
+    CHECK(s.update(1.45, true, 0.6));
+}
+
 // ---------------------------------------------------------------- storage / input
 
 static void test_valid_user()
@@ -204,6 +238,8 @@ int main()
         {"distant face rejected", test_too_far},
         {"missing depth rejected", test_no_depth},
         {"depth_at skips holes", test_depth_at_ignores_holes},
+        {"head turned away is not attentive", test_facing_sensor},
+        {"attention streak timing", test_streak},
         {"username validation", test_valid_user},
         {"face storage and config", test_storage_roundtrip},
     };

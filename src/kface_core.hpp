@@ -44,8 +44,9 @@ struct Config {
     float max_iod_mm = 80.f;
     float min_dist_mm = 300.f;
     float max_dist_mm = 1300.f;
-    double timeout_s = 4.0;
-    int need_matches = 2;           // live matching frames required
+    float max_yaw_deg = 15.f;       // head must point at the sensor (looking at another screen is 40-90)
+    double attention_s = 0.6;       // ...continuously for this long, with a live matching face
+    double timeout_s = 5.0;
 };
 
 inline void load_config(Config &c)
@@ -60,7 +61,8 @@ inline void load_config(Config &c)
         else if (k == "min_relief_h_mm") c.min_relief_h_mm = v;
         else if (k == "min_plane_rms_mm") c.min_plane_rms_mm = v;
         else if (k == "timeout_s") c.timeout_s = v;
-        else if (k == "need_matches") c.need_matches = v;
+        else if (k == "max_yaw_deg") c.max_yaw_deg = v;
+        else if (k == "attention_s") c.attention_s = v;
     }
 }
 
@@ -72,6 +74,8 @@ struct Face {
     cv::Mat det;          // YuNet row: box(4) landmarks(10) score
     cv::Mat feature;
     float relief = 0, relief_v = 0, relief_h = 0, plane_rms = 0, iod = 0, dist = 0;
+    float yaw = 0, pitch = 0;  // head orientation in degrees (from landmarks), 0/0 = facing the sensor
+    float yaw_depth = 0;       // yaw from cheek depth difference, independent of landmarks
     bool live = false;
     std::string why;
 };
@@ -122,6 +126,24 @@ inline void liveness(const cv::Mat &depth, const Intrinsics &k, const Config &c,
     f.relief_v = mc - no;
     f.relief_h = (cr + cl) / 2 - no;
 
+    // Head pose. The nose tip sits ~25 mm in front of the eye/mouth plane, so its image offset
+    // from the face centre gives yaw and pitch: offset = relief * sin(angle).
+    {
+        float emx = (d[4] + d[6]) / 2, emy = (d[5] + d[7]) / 2;
+        float mmx = (d[10] + d[12]) / 2, mmy = (d[11] + d[13]) / 2;
+        float mm_per_px = no / k.fx / 2;  // landmarks are in 2x upscaled pixels
+        float cx = (emx + mmx) / 2, cy = (emy + mmy) / 2;
+        float ux = (d[6] - d[4]), uy = (d[7] - d[5]), ul = std::hypot(ux, uy);
+        ux /= ul, uy /= ul;  // eye axis; compensates head roll
+        float ox = ((d[8] - cx) * ux + (d[9] - cy) * uy) * mm_per_px;
+        float oy = (-(d[8] - cx) * uy + (d[9] - cy) * ux) * mm_per_px;
+        float r = std::max(f.relief, 10.f);
+        f.yaw = std::asin(std::clamp(ox / r, -1.f, 1.f)) * 180 / (float)CV_PI;
+        f.pitch = std::asin(std::clamp(oy / r, -1.f, 1.f)) * 180 / (float)CV_PI;
+        float lat = std::hypot(2 * ex, 2 * ey) * mm_per_px;
+        f.yaw_depth = std::atan2(cl - cr, lat) * 180 / (float)CV_PI;
+    }
+
     // metric interocular distance
     float px = std::hypot(d[4] - d[6], d[5] - d[7]) / 2;
     f.iod = px * ((re + le) / 2) / k.fx;
@@ -159,6 +181,25 @@ inline void liveness(const cv::Mat &depth, const Intrinsics &k, const Config &c,
     else if (f.plane_rms < c.min_plane_rms_mm) f.why = "flat (plane)";
     else f.live = true;
 }
+
+// Intent check: authentication needs the user to deliberately face the sensor, so being merely
+// in view (e.g. reading another screen when a sudo prompt pops up) is not enough.
+inline bool facing_sensor(const Face &f, const Config &c) { return std::fabs(f.yaw) <= c.max_yaw_deg; }
+
+// Tracks how long a condition has held without interruption.
+struct Streak {
+    double since = -1;
+    // t: seconds on any monotonic clock. Returns true once ok has held for at least `need` seconds.
+    bool update(double t, bool ok, double need)
+    {
+        if (!ok) {
+            since = -1;
+            return false;
+        }
+        if (since < 0) since = t;
+        return t - since >= need;
+    }
+};
 
 // ---------------------------------------------------------------- storage
 

@@ -29,6 +29,7 @@ class Camera : public QObject {
     Q_PROPERTY(bool faceVisible MEMBER faceVisible_ NOTIFY changed)
     Q_PROPERTY(QRectF faceRect MEMBER faceRect_ NOTIFY changed)  // normalised to the image
     Q_PROPERTY(bool live MEMBER live_ NOTIFY changed)
+    Q_PROPERTY(bool facing MEMBER facing_ NOTIFY changed)
     Q_PROPERTY(QString why MEMBER why_ NOTIFY changed)
     Q_PROPERTY(double similarity MEMBER similarity_ NOTIFY changed)
     Q_PROPERTY(double progress MEMBER progress_ NOTIFY changed)
@@ -65,7 +66,7 @@ private:
 
     QString status_ = "starting", mode_ = "preview", why_, user_;
     int frame_ = 0, enrolled_ = 0;
-    bool faceVisible_ = false, live_ = false;
+    bool faceVisible_ = false, live_ = false, facing_ = false;
     QRectF faceRect_;
     double similarity_ = 0, progress_ = 0;
 };

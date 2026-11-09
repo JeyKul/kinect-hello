@@ -57,7 +57,8 @@ static int cmd_debug(int n)
     if (!fe.init() || !k.open()) return 2;
     fs::create_directories("debug");
     cv::Mat ir, depth, ref;
-    for (int i = 0; i < n; i++) {
+    auto t0 = Clock::now();
+    for (int i = 0; i < n && !stop_flag(); i++) {
         if (!k.grab(ir, depth)) continue;
         cv::Mat out;
         cv::cvtColor(ir, out, cv::COLOR_GRAY2BGR);
@@ -67,6 +68,8 @@ static int cmd_debug(int n)
             if (ref.empty() && f.live) ref = f.feature;
             s = ref.empty() ? 0 : fe.match(ref, f.feature);
             annotate(out, f, s);
+            printf("%5.1fs yaw %5.1f (depth %5.1f) pitch %5.1f | ", std::chrono::duration<double>(Clock::now() - t0).count(),
+                   f.yaw, f.yaw_depth, f.pitch);
             printf("%3d relief %5.1f v %5.1f h %5.1f mm  plane_rms %4.1f mm  iod %4.0f mm  dist %4.0f mm  self-sim %.3f  %s\n", i,
                    f.relief, f.relief_v, f.relief_h, f.plane_rms, f.iod, f.dist, s, f.live ? "LIVE" : f.why.c_str());
         } else {
@@ -76,6 +79,45 @@ static int cmd_debug(int n)
         depth.convertTo(dv, CV_8U, 255.0 / 1500.0);
         cv::imwrite(cv::format("debug/ir_%03d.png", i), out);
         cv::imwrite(cv::format("debug/depth_%03d.png", i), dv);
+    }
+    return 0;
+}
+
+// guided head pose recording, used to tune the attention check
+static int cmd_pose()
+{
+    Config c;
+    load_config(c);
+    Kinect k;
+    FaceEngine fe;
+    if (!fe.init() || !k.open()) return 2;
+    struct Phase {
+        const char *say;
+        double secs;
+    } phases[] = {{"Look straight INTO THE KINECT", 5}, {"Look at your MAIN DISPLAY as usual", 5},
+                  {"Look at the Kinect and NOD slowly twice", 6}, {"Look at the main display and NOD twice", 6}};
+    cv::Mat ir, depth;
+    for (auto &ph : phases) {
+        printf("\n>>> %s\n", ph.say);
+        fflush(stdout);
+        std::vector<float> yaw, pitch;
+        auto t0 = Clock::now();
+        double t;
+        while ((t = std::chrono::duration<double>(Clock::now() - t0).count()) < ph.secs && !stop_flag()) {
+            if (!k.grab(ir, depth)) continue;
+            Face f;
+            if (!fe.analyse(ir, depth, k, c, f) || f.why == "no depth" || f.why == "sparse depth" || t < 1.0) continue;
+            yaw.push_back(f.yaw);
+            pitch.push_back(f.pitch);
+            printf("    %4.1fs yaw %6.1f  pitch %6.1f  %s\n", t, f.yaw, f.pitch, f.live ? "live" : f.why.c_str());
+        }
+        auto stat = [](std::vector<float> v, const char *n) {
+            if (v.empty()) return;
+            std::sort(v.begin(), v.end());
+            printf("  %s median %6.1f  range %6.1f .. %6.1f\n", n, v[v.size() / 2], v.front(), v.back());
+        };
+        stat(yaw, "yaw  ");
+        stat(pitch, "pitch");
     }
     return 0;
 }
@@ -92,7 +134,7 @@ static int cmd_enroll(const std::string &user, int samples)
     cv::Mat ir, depth;
     int got = 0;
     auto t0 = Clock::now();
-    while (got < samples && Clock::now() - t0 < std::chrono::seconds(60)) {
+    while (got < samples && Clock::now() - t0 < std::chrono::seconds(60) && !stop_flag()) {
         if (!k.grab(ir, depth)) continue;
         Face f;
         if (!fe.analyse(ir, depth, k, c, f)) continue;
@@ -135,22 +177,25 @@ static int cmd_verify(const std::string &user)
     printf("Looking for your face...\n");
     fflush(stdout);
     cv::Mat ir, depth;
-    int hits = 0;
-    auto deadline = Clock::now() + std::chrono::duration<double>(c.timeout_s);
-    while (Clock::now() < deadline) {
+    Streak streak;
+    auto t0 = Clock::now();
+    auto deadline = t0 + std::chrono::duration<double>(c.timeout_s);
+    while (Clock::now() < deadline && !stop_flag()) {
         if (!k.grab(ir, depth)) continue;
         Face f;
-        if (!fe.analyse(ir, depth, k, c, f)) continue;
+        double t = std::chrono::duration<double>(Clock::now() - t0).count();
+        if (!fe.analyse(ir, depth, k, c, f)) {
+            streak.update(t, false, c.attention_s);
+            continue;
+        }
         float best = -1;
         for (auto &m : faces) best = std::max(best, fe.match(m, f.feature));
         if (getenv("KFACE_VERBOSE"))
-            fprintf(stderr, "sim %.3f relief %.1f v %.1f h %.1f rms %.1f iod %.0f %s\n", best, f.relief, f.relief_v, f.relief_h, f.plane_rms, f.iod,
-                    f.live ? "live" : f.why.c_str());
-        if (f.live && best >= c.match_threshold) {
-            if (++hits >= c.need_matches) {
-                if (pw) notify_overlay(uid, "ok");
-                return 0;
-            }
+            fprintf(stderr, "%.2fs sim %.3f yaw %.1f relief %.1f v %.1f h %.1f rms %.1f iod %.0f %s\n", t, best, f.yaw,
+                    f.relief, f.relief_v, f.relief_h, f.plane_rms, f.iod, f.live ? "live" : f.why.c_str());
+        if (streak.update(t, f.live && best >= c.match_threshold && facing_sensor(f, c), c.attention_s)) {
+            if (pw) notify_overlay(uid, "ok");
+            return 0;
         }
     }
     if (pw) notify_overlay(uid, "fail");
@@ -232,6 +277,8 @@ int main(int argc, char **argv)
 {
     cv::utils::logging::setLogLevel(getenv("KFACE_VERBOSE") ? cv::utils::logging::LOG_LEVEL_INFO
                                                             : cv::utils::logging::LOG_LEVEL_SILENT);
+    setvbuf(stdout, nullptr, _IOLBF, 0);
+    install_stop_handler();
     std::string cmd = argc > 1 ? argv[1] : "";
     // pam_exec passes the user in the environment
     if (cmd == "verify" && argc == 2 && getenv("PAM_USER")) {
@@ -246,6 +293,7 @@ int main(int argc, char **argv)
     }
     if (cmd == "import" && argc == 3) return cmd_import(argv[2]);
     if (cmd == "remove" && argc == 2) return cmd_remove();
+    if (cmd == "pose") return cmd_pose();
     if (cmd == "debug") return cmd_debug(argc > 2 ? atoi(argv[2]) : 20);
     if ((cmd == "enroll" || cmd == "verify") && argc > 2) {
         std::string user = argv[2];

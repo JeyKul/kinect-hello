@@ -95,7 +95,8 @@ void Camera::run()
     post([this] { status_ = "ready"; emit changed(); });
 
     std::vector<cv::Mat> enrolled = load_faces(user_.toStdString()), samples;
-    int gen = -1, hits = 0;
+    int gen = -1;
+    Streak streak;
     auto t0 = Clock::now();
     cv::Mat ir, depth;
 
@@ -106,7 +107,7 @@ void Camera::run()
         if (gen != generation_) {
             gen = generation_;
             samples.clear();
-            hits = 0;
+            streak = {};
             t0 = Clock::now();
             enrolled = load_faces(user_.toStdString());
         }
@@ -145,9 +146,9 @@ void Camera::run()
             if (enrolled.empty()) {
                 done = "test", msg = "No face set up yet";
             } else {
-                if (seen && f.live && sim >= cfg.match_threshold) hits++;
+                bool good = seen && f.live && sim >= cfg.match_threshold && facing_sensor(f, cfg);
                 progress = elapsed / TEST_TIMEOUT_S;
-                if (hits >= cfg.need_matches) done = "test", ok = true, msg = QString("Recognized (similarity %1)").arg(sim, 0, 'f', 2);
+                if (streak.update(elapsed, good, cfg.attention_s)) done = "test", ok = true, msg = QString("Recognized (similarity %1)").arg(sim, 0, 'f', 2);
                 else if (elapsed > TEST_TIMEOUT_S) done = "test", msg = "Not recognized";
             }
         }
@@ -161,12 +162,13 @@ void Camera::run()
             rect = QRectF(d[0] / FaceEngine::W, d[1] / FaceEngine::H, d[2] / FaceEngine::W, d[3] / FaceEngine::H);
         }
         QString why = QString::fromStdString(f.why);
-        bool live = f.live;
+        bool live = f.live, facing = seen && facing_sensor(f, cfg);
         post([=, this] {
             frame_++;
             faceVisible_ = seen;
             faceRect_ = rect;
             live_ = live;
+            facing_ = facing;
             why_ = why;
             similarity_ = sim;
             if (mode_req_ == mode) progress_ = std::min(1.0, progress);

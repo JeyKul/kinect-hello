@@ -72,7 +72,7 @@ Window {
             color: "white"
             font.pixelSize: 15
             font.weight: Font.Medium
-            text: win.phase === "ok" ? "Welcome back" : win.phase === "fail" ? "Not recognized" : "Looking for you…"
+            text: win.phase === "ok" ? "Welcome back" : win.phase === "fail" ? "Not recognized" : "Look into the Kinect"
         }
     }
 }

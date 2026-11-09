@@ -35,6 +35,7 @@ ApplicationWindow {
 
     function hint() {
         if (!camera.faceVisible) return "No face in view"
+        if (camera.live && !camera.facing) return "Look into the Kinect"
         if (camera.live) return camera.enrolled > 0 ? "Live 3D face · match " + camera.similarity.toFixed(2) : "Live 3D face"
         switch (camera.why) {
         case "no depth": case "sparse depth": return "No depth here (glass or too close)"
