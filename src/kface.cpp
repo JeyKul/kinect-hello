@@ -313,6 +313,13 @@ int main(int argc, char **argv)
     }
     if (cmd == "import" && argc == 3) return cmd_import(argv[2]);
     if (cmd == "remove" && argc == 2) return cmd_remove();
+    if (cmd == "selftest") {
+        // models load and run on this OpenCV build (no Kinect needed)
+        FaceEngine fe;
+        if (!fe.init()) return 1;
+        printf("kface: models OK (OpenCV %s)\n", CV_VERSION);
+        return 0;
+    }
     if (cmd == "pose") return cmd_pose();
     if (cmd == "debug") return cmd_debug(argc > 2 ? atoi(argv[2]) : 20);
     if ((cmd == "enroll" || cmd == "verify") && argc > 2) {
@@ -327,6 +334,6 @@ int main(int argc, char **argv)
         }
         return cmd_verify(user, wait);
     }
-    fprintf(stderr, "usage: kface debug [n] | enroll <user> [samples] [--replace] | verify <user> [--wait] | import <file> | remove\n");
+    fprintf(stderr, "usage: kface selftest | debug [n] | enroll <user> [samples] [--replace] | verify <user> [--wait] | import <file> | remove\n");
     return 64;
 }

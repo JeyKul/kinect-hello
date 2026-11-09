@@ -103,12 +103,24 @@ class FaceEngine {
 public:
     bool init()
     {
+        // YuNet 2023mar needs OpenCV >= 4.8; older releases (Debian 12, Ubuntu 24.04) load 2022mar
+        for (const char *m : {"face_detection_yunet_2023mar.onnx", "face_detection_yunet_2022mar.onnx"}) {
+            try {
+                det_ = cv::FaceDetectorYN::create(model_dir() + "/" + m, "", cv::Size(W, H), 0.7f, 0.3f, 5000);
+                cv::Mat probe(H, W, CV_8UC3, cv::Scalar(0)), faces;
+                det_->detect(probe, faces);
+                break;
+            } catch (const cv::Exception &e) {
+                det_.release();
+            }
+        }
         try {
-            det_ = cv::FaceDetectorYN::create(model_dir() + "/face_detection_yunet_2023mar.onnx", "",
-                                              cv::Size(W, H), 0.7f, 0.3f, 5000);
             rec_ = cv::FaceRecognizerSF::create(model_dir() + "/face_recognition_sface_2021dec.onnx", "");
         } catch (const cv::Exception &e) {
-            fprintf(stderr, "kface: cannot load models from %s: %s\n", model_dir().c_str(), e.what());
+            rec_.release();
+        }
+        if (!det_ || !rec_) {
+            fprintf(stderr, "kface: cannot load face models from %s\n", model_dir().c_str());
             return false;
         }
         return true;

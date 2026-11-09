@@ -31,25 +31,36 @@ Limitations: browsers list it as a "security key", not as "this device". Passkey
 ## Requirements
 
 - Kinect v2 with the Windows adapter, on a USB 3 port
-- Arch Linux, or similar: `cmake opencv qt6-declarative layer-shell-qt libusb glfw libjpeg-turbo` and `rust tpm2-tss` for passkeys
-- KDE Plasma on Wayland for the overlay and lock-screen integration. The PAM part works anywhere.
-- A TPM 2.0 for passkeys
+- Arch Linux or a Debian/Ubuntu based distribution (Manjaro, EndeavourOS, Debian 13, Ubuntu 24.04, Mint, Pop!_OS …)
+- Optional: Qt ≥ 6.5 for the setup app, Plasma 6 (LayerShellQt) for the overlay, a TPM 2.0 for passkeys, Rust ≥ 1.78 for the fprintd emulation and passkeys. The installer builds whatever the system supports.
 
-## Build and install
+## Install
 
 ```sh
-./build.sh            # builds libfreenect2 (pinned), fetches models, builds everything, runs tests
-sudo ./install.sh     # installs to /usr/local, hooks PAM (sudo, polkit-1, kde, sddm), starts kface-fido
+git clone https://github.com/JeyKul/kinect-hello && cd kinect-hello
+./install.sh          # as your normal user: installs packages, builds, asks for sudo to install
 kface-setup           # enroll your face ("Face Unlock" in the app menu)
 ```
 
-`install.sh` backs up every PAM file it touches as `*.pre-kface`. For the lock screen it replaces `pam_fprintd` in `/etc/pam.d/kde-fingerprint` with the face check (so a real fingerprint reader and kface can't be used together on the lock screen yet). `sudo ./uninstall.sh` removes the hooks and binaries but keeps your face data in `/etc/kface`. SSH and `su` are never hooked.
+The installer:
+- installs build dependencies with pacman or apt (`--no-deps` skips this)
+- builds libfreenect2 (pinned commit, CPU pipeline only), downloads the face models (pinned, checksummed), builds everything and runs the tests (`--build-only` stops here)
+- installs to `/usr/local`, adds a udev rule so the logged-in user can open the Kinect, and sets up:
+
+| What | How |
+|---|---|
+| Any desktop's fingerprint login: GNOME/GDM, KDE lock screen, Cinnamon, `fprintd-*` | `kface-fprintd`, an fprintd-compatible service. The distro's `fprintd` package stays installed for `pam_fprintd`; only `fprintd.service` is overridden. Your face shows up as an enrolled "finger" and can also be enrolled from GNOME Settings. |
+| `sudo`, polkit prompts, SDDM | a `pam_exec` line before the password. On Debian/Ubuntu, `pam_fprintd` in common-auth already covers sudo/polkit, so no extra line is added. |
+| Passkeys | `kface-fido` service (if a TPM is present) |
+
+Every PAM file it touches is backed up as `*.pre-kface`. `sudo ./uninstall.sh` removes the hooks, services, binaries and udev rule, restores the real fprintd, and keeps your face data in `/etc/kface`. SSH and `su` are never hooked. Because fprintd is emulated, a physical fingerprint reader can't be used at the same time (yet).
 
 Tuning goes in `/etc/kface/kface.conf`, one `key value` pair per line: `match_threshold`, `max_yaw_deg`, `attention_s`, `timeout_s`, `min_relief_mm`, `min_relief_v_mm`, `min_relief_h_mm`, `min_plane_rms_mm`.
 
 ## Command line
 
 ```
+kface selftest           check that the face models load on this OpenCV build
 kface debug [n]          save n annotated IR/depth frames to ./debug and print all metrics
 kface pose               guided head-pose recording, for tuning the attention check
 kface verify <user>      exit 0 on a live, attentive, matching face (this is what PAM runs)

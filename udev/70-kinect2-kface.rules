@@ -1,0 +1,4 @@
+# Kinect v2 (Xbox One Kinect): let the logged-in user open the sensor (kface-setup, lock screen)
+SUBSYSTEM=="usb", ATTR{idVendor}=="045e", ATTR{idProduct}=="02c4", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="045e", ATTR{idProduct}=="02d8", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="045e", ATTR{idProduct}=="02d9", TAG+="uaccess"

@@ -21,16 +21,20 @@ target_link_libraries(kface_tests PRIVATE opencv_core)
 add_test(NAME core COMMAND kface_tests)
 
 # ---------------------------------------------------------------- GUI
-option(KFACE_GUI "Build kface-setup and kface-overlay" ON)
+# Optional: the setup app needs Qt >= 6.5, the overlay additionally LayerShellQt (Plasma 6).
+option(KFACE_GUI "Build kface-setup and kface-overlay if Qt is available" ON)
 if(KFACE_GUI)
-  find_package(Qt6 6.5 REQUIRED COMPONENTS Gui Quick Network DBus)
-  find_package(LayerShellQt REQUIRED)
+  find_package(Qt6 6.5 QUIET COMPONENTS Gui Quick Network DBus)
+endif()
+if(KFACE_GUI AND Qt6_FOUND)
   qt_standard_project_setup(REQUIRES 6.5)
 
   # all QML lives at each module's root so Main.qml sees the shared FaceGlyph
   set_source_files_properties(gui/FaceGlyph.qml PROPERTIES QT_RESOURCE_ALIAS FaceGlyph.qml)
   set_source_files_properties(gui/setup/Main.qml gui/overlay/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
-  qt_policy(SET QTP0004 NEW)
+  if(QT_KNOWN_POLICY_QTP0004)
+    qt_policy(SET QTP0004 NEW)
+  endif()
 
   qt_add_executable(kface-setup gui/setup/main.cpp gui/setup/camera.cpp gui/setup/camera.h)
   qt_add_qml_module(kface-setup URI KFaceSetup VERSION 1.0
@@ -38,14 +42,21 @@ if(KFACE_GUI)
   target_include_directories(kface-setup PRIVATE src ${freenect2_INCLUDE_DIRS})
   target_link_libraries(kface-setup PRIVATE Qt6::Quick ${freenect2_LIBRARIES} ${OpenCV_LIBS})
   set_target_properties(kface-setup PROPERTIES BUILD_RPATH "${freenect2_DIR}/../.." INSTALL_RPATH "/usr/local/lib/kface")
-
-  qt_add_executable(kface-overlay gui/overlay/main.cpp)
-  qt_add_qml_module(kface-overlay URI KFaceOverlay VERSION 1.0
-    QML_FILES gui/overlay/Main.qml gui/FaceGlyph.qml)
-  target_include_directories(kface-overlay PRIVATE src)
-  target_link_libraries(kface-overlay PRIVATE Qt6::Quick Qt6::Network Qt6::DBus LayerShellQt::Interface)
-
-  install(TARGETS kface-setup kface-overlay DESTINATION bin)
+  install(TARGETS kface-setup DESTINATION bin)
   install(FILES gui/kface-setup.desktop DESTINATION share/applications)
-  install(FILES gui/kface-overlay.desktop DESTINATION /etc/xdg/autostart)
+
+  find_package(LayerShellQt QUIET)
+  if(LayerShellQt_FOUND)
+    qt_add_executable(kface-overlay gui/overlay/main.cpp)
+    qt_add_qml_module(kface-overlay URI KFaceOverlay VERSION 1.0
+      QML_FILES gui/overlay/Main.qml gui/FaceGlyph.qml)
+    target_include_directories(kface-overlay PRIVATE src)
+    target_link_libraries(kface-overlay PRIVATE Qt6::Quick Qt6::Network Qt6::DBus LayerShellQt::Interface)
+    install(TARGETS kface-overlay DESTINATION bin)
+    install(FILES gui/kface-overlay.desktop DESTINATION /etc/xdg/autostart)
+  else()
+    message(STATUS "LayerShellQt (Qt6) not found: skipping kface-overlay")
+  endif()
+else()
+  message(STATUS "Qt >= 6.5 not found: building without kface-setup and kface-overlay")
 endif()
