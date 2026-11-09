@@ -3,8 +3,8 @@ import QtQuick.Window
 
 Window {
     id: win
-    width: 260
-    height: 230
+    width: 280
+    height: bridge.reason !== "" ? 256 : 230
     visible: false
     color: "transparent"
     flags: Qt.FramelessWindowHint | Qt.WindowDoesNotAcceptFocus
@@ -73,6 +73,20 @@ Window {
             font.pixelSize: 15
             font.weight: Font.Medium
             text: win.phase === "ok" ? "Welcome back" : win.phase === "fail" ? "Not recognized" : "Look into the Kinect"
+        }
+
+        Text {
+            id: reasonText
+            visible: bridge.reason !== ""
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 14
+            width: parent.width - 28
+            horizontalAlignment: Text.AlignHCenter
+            elide: Text.ElideMiddle
+            color: Qt.rgba(1, 1, 1, 0.6)
+            font.pixelSize: 12
+            text: bridge.reason
         }
     }
 }

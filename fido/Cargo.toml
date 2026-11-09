@@ -1,0 +1,20 @@
+[package]
+name = "kface-fido"
+version = "0.1.0"
+edition = "2021"
+description = "Virtual FIDO2 security key: TPM-held passkeys, unlocked by Kinect face verification"
+license = "MIT"
+
+[dependencies]
+ciborium = "0.2"
+hex = "0.4"
+libc = "0.2"
+p256 = { version = "0.13", features = ["ecdsa"] }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tss-esapi = "7.6"
+
+[profile.release]
+strip = true

@@ -15,8 +15,8 @@ namespace kface {
 
 inline std::string overlay_socket(uid_t uid) { return "/run/user/" + std::to_string(uid) + "/kface-overlay.sock"; }
 
-// event: "scan", "ok" or "fail"
-inline void notify_overlay(uid_t uid, const char *event)
+// event: "scan", "ok" or "fail"; detail: optional short text such as "Sign in: github.com"
+inline void notify_overlay(uid_t uid, const char *event, const std::string &detail = "")
 {
     std::string path = overlay_socket(uid);
     struct stat st;
@@ -30,7 +30,12 @@ inline void notify_overlay(uid_t uid, const char *event)
     addr.sun_family = AF_UNIX;
     memcpy(addr.sun_path, path.c_str(), path.size());
     if (connect(fd, (sockaddr *)&addr, sizeof addr) == 0) {
-        std::string msg = std::string(event) + "\n";
+        std::string msg = event;
+        if (!detail.empty()) {
+            msg += ' ';
+            for (char ch : detail.substr(0, 80)) msg += (ch >= 0x20 && ch < 0x7f) ? ch : '?';
+        }
+        msg += '\n';
         (void)!send(fd, msg.data(), msg.size(), MSG_NOSIGNAL | MSG_DONTWAIT);
     }
     close(fd);

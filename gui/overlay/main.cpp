@@ -30,6 +30,7 @@ class Overlay : public QObject {
     Q_OBJECT
     Q_CLASSINFO("D-Bus Interface", "org.kde.kface.Overlay")
     Q_PROPERTY(QString event MEMBER event_ NOTIFY eventChanged)
+    Q_PROPERTY(QString reason MEMBER reason_ NOTIFY eventChanged)
 
 public:
     explicit Overlay(QObject *parent = nullptr) : QObject(parent)
@@ -53,9 +54,10 @@ public:
 
     void setWindow(QQuickWindow *w) { win_ = w; }
 
-    void event(const QString &e)
+    void event(const QString &e, const QString &reason)
     {
         if (e == "scan") {
+            reason_ = reason;
             // show once we know where the pointer is (or the wait times out)
             pending_ = true;
             waitCursor_.start();
@@ -123,7 +125,7 @@ private:
     }
 
     QQuickWindow *win_ = nullptr;
-    QString event_, script_;
+    QString event_, reason_, script_;
     QTimer waitCursor_;
     bool pending_ = false;
 };
@@ -153,8 +155,9 @@ int main(int argc, char **argv)
         while (QLocalSocket *s = server.nextPendingConnection()) {
             QObject::connect(s, &QLocalSocket::readyRead, s, [s, &overlay] {
                 while (s->canReadLine()) {
-                    QString e = QString::fromUtf8(s->readLine()).trimmed();
-                    if (e == "scan" || e == "ok" || e == "fail") overlay.event(e);
+                    QString line = QString::fromUtf8(s->readLine()).trimmed();
+                    QString e = line.section(' ', 0, 0), reason = line.section(' ', 1);
+                    if (e == "scan" || e == "ok" || e == "fail") overlay.event(e, reason);
                 }
             });
             QObject::connect(s, &QLocalSocket::disconnected, s, &QObject::deleteLater);

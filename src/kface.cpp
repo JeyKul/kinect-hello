@@ -173,7 +173,9 @@ static int cmd_verify(const std::string &user)
     if (!fe.init() || !k.open()) return 2;
     struct passwd *pw = getpwnam(user.c_str());
     uid_t uid = pw ? pw->pw_uid : (uid_t)-1;
-    if (pw) notify_overlay(uid, "scan");
+    // the caller (e.g. kface-fido) may say what the scan is for
+    const char *reason = getenv("KFACE_REASON");
+    if (pw) notify_overlay(uid, "scan", reason ? reason : "");
     printf("Looking for your face...\n");
     fflush(stdout);
     cv::Mat ir, depth;
