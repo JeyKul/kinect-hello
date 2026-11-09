@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 [ "$(id -u)" = 0 ] || { echo "run with sudo"; exit 1; }
-USER_NAME=${SUDO_USER:-jey}
+USER_NAME=${SUDO_USER:-}
 LINE_TTY='auth       sufficient   pam_exec.so quiet stdout /usr/local/bin/kface verify'
 LINE_GUI='auth       sufficient   pam_exec.so quiet /usr/local/bin/kface verify'
 
@@ -12,7 +12,7 @@ cp -a prefix/lib/libfreenect2.so* /usr/local/lib/kface/
 install -m644 models/*.onnx /usr/local/share/kface/
 cmake --install build --prefix /usr/local >/dev/null
 install -d -m755 -o root -g root /etc/kface
-if [ -f "data/$USER_NAME.faces" ] && [ ! -f "/etc/kface/$USER_NAME.faces" ]; then
+if [ -n "$USER_NAME" ] && [ -f "data/$USER_NAME.faces" ] && [ ! -f "/etc/kface/$USER_NAME.faces" ]; then
     install -m640 -o root -g "$(id -gn "$USER_NAME")" "data/$USER_NAME.faces" "/etc/kface/$USER_NAME.faces"
 fi
 
