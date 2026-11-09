@@ -7,6 +7,7 @@
 #include <libfreenect2/frame_listener_impl.h>
 #include <libfreenect2/packet_pipeline.h>
 #include <libfreenect2/logger.h>
+#include <libfreenect2/led_settings.h>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/objdetect/face.hpp>
 
@@ -58,6 +59,8 @@ public:
     {
         if (dev_) {
             dev_->stop();
+            // the device keeps its logo (0) and status (1) LEDs lit after streaming; switch them off
+            for (uint16_t led : {0, 1}) dev_->setLedStatus(libfreenect2::LedSettings{led, 0, 0, 0, 0, 0});
             dev_->close();
             delete dev_;
         }

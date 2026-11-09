@@ -23,7 +23,7 @@ add_test(NAME core COMMAND kface_tests)
 # ---------------------------------------------------------------- GUI
 option(KFACE_GUI "Build kface-setup and kface-overlay" ON)
 if(KFACE_GUI)
-  find_package(Qt6 6.5 REQUIRED COMPONENTS Gui Quick Network)
+  find_package(Qt6 6.5 REQUIRED COMPONENTS Gui Quick Network DBus)
   find_package(LayerShellQt REQUIRED)
   qt_standard_project_setup(REQUIRES 6.5)
 
@@ -43,7 +43,7 @@ if(KFACE_GUI)
   qt_add_qml_module(kface-overlay URI KFaceOverlay VERSION 1.0
     QML_FILES gui/overlay/Main.qml gui/FaceGlyph.qml)
   target_include_directories(kface-overlay PRIVATE src)
-  target_link_libraries(kface-overlay PRIVATE Qt6::Quick Qt6::Network LayerShellQt::Interface)
+  target_link_libraries(kface-overlay PRIVATE Qt6::Quick Qt6::Network Qt6::DBus LayerShellQt::Interface)
 
   install(TARGETS kface-setup kface-overlay DESTINATION bin)
   install(FILES gui/kface-setup.desktop DESTINATION share/applications)
